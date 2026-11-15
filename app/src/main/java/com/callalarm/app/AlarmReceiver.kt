@@ -20,8 +20,14 @@ class AlarmReceiver : BroadcastReceiver() {
             AlarmScheduler.schedule(context, alarm)
         }
 
-        context.startForegroundService(
-            AlarmService.startIntent(context, alarm.id, alarm.label, alarm.message)
-        )
+        try {
+            context.startForegroundService(
+                AlarmService.startIntent(context, alarm.id, alarm.label, alarm.message)
+            )
+        } catch (_: Exception) {
+            // Android refused to start the service from the background:
+            // fall back to a loud full-screen call notification.
+            AlarmService.showFallbackCall(context, alarm.id, alarm.label, alarm.message)
+        }
     }
 }

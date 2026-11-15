@@ -42,6 +42,62 @@ class AlarmService : Service() {
         private const val MAX_RING_MS = 10 * 60 * 1000L
         private const val PI_FLAGS = PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
 
+        private const val FALLBACK_CHANNEL_ID = "incoming_call_fallback"
+
+        /**
+         * Backup path used when the foreground service can't be started from the
+         * background: a full-screen call notification whose own channel plays the
+         * ringtone (repeating) and vibrates.
+         */
+        fun showFallbackCall(ctx: Context, id: Int, label: String, message: String) {
+            val nm = ctx.getSystemService(NotificationManager::class.java)
+            if (nm.getNotificationChannel(FALLBACK_CHANNEL_ID) == null) {
+                val uri = RingtoneManager.getActualDefaultRingtoneUri(ctx, RingtoneManager.TYPE_RINGTONE)
+                    ?: RingtoneManager.getDefaultUri(RingtoneManager.TYPE_ALARM)
+                val ch = NotificationChannel(
+                    FALLBACK_CHANNEL_ID, "Incoming alarm calls (backup)", NotificationManager.IMPORTANCE_HIGH
+                )
+                ch.setSound(
+                    uri,
+                    AudioAttributes.Builder()
+                        .setUsage(AudioAttributes.USAGE_ALARM)
+                        .setContentType(AudioAttributes.CONTENT_TYPE_SONIFICATION)
+                        .build()
+                )
+                ch.enableVibration(true)
+                ch.vibrationPattern = longArrayOf(0, 1000, 800, 1000, 800)
+                ch.lockscreenVisibility = Notification.VISIBILITY_PUBLIC
+                nm.createNotificationChannel(ch)
+            }
+            val full = PendingIntent.getActivity(
+                ctx, 1, IncomingCallActivity.intent(ctx, id, label, message, false), PI_FLAGS
+            )
+            val answer = PendingIntent.getActivity(
+                ctx, 2, IncomingCallActivity.intent(ctx, id, label, message, true), PI_FLAGS
+            )
+            val n = Notification.Builder(ctx, FALLBACK_CHANNEL_ID)
+                .setSmallIcon(R.drawable.ic_call)
+                .setContentTitle(label)
+                .setContentText("Incoming call")
+                .setCategory(Notification.CATEGORY_CALL)
+                .setOngoing(true)
+                .setVisibility(Notification.VISIBILITY_PUBLIC)
+                .setFullScreenIntent(full, true)
+                .setContentIntent(full)
+                .addAction(
+                    Notification.Action.Builder(
+                        Icon.createWithResource(ctx, R.drawable.ic_call), "Answer", answer
+                    ).build()
+                )
+                .build()
+            n.flags = n.flags or Notification.FLAG_INSISTENT // keep repeating the ringtone
+            nm.notify(NOTIF_ID, n)
+            try {
+                ctx.startActivity(IncomingCallActivity.intent(ctx, id, label, message, false))
+            } catch (_: Exception) {
+            }
+        }
+
         fun startIntent(ctx: Context, id: Int, label: String, message: String): Intent =
             Intent(ctx, AlarmService::class.java)
                 .setAction(ACTION_START)
@@ -63,6 +119,10 @@ class AlarmService : Service() {
         if (intent == null || intent.action == ACTION_STOP) {
             stopRinging()
             stopForeground(STOP_FOREGROUND_REMOVE)
+            try {
+                getSystemService(NotificationManager::class.java).cancel(NOTIF_ID) // also clears the backup notification
+            } catch (_: Exception) {
+            }
             stopSelf()
             sendBroadcast(Intent(ACTION_STOPPED).setPackage(packageName))
             return START_NOT_STICKY
